@@ -1,0 +1,5 @@
+APIKEY="averylongandsecurestring"
+TTL=300
+RECORD="www"
+DOMAIN="domain.tld"
+IP_SERVICE="https://ifconfig.co"
