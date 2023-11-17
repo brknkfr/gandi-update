@@ -78,16 +78,16 @@ CACHE_FILE="/tmp/$SCRIPTNAME-$(echo "$FQDN" | tr -cd '[:alnum:]')"
 
 run() {
 	UPDATED="false"
-	MSG=""
+	ERROR=""
 	for VER in "4" "6"; do
 		if [[ "$VER" == "4" ]]; then
 			REGEXP='[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}'
 			TYPE="A"
-			IP="" && IP_DNS="" && ERROR["$VER"]=""
+			IP="" && IP_DNS=""
 		elif [[ "$VER" == "6" ]]; then
 			REGEXP='([a-f0-9:]+:+)+[a-f0-9]+'
 			TYPE="AAAA"
-			IP="" && IP_DNS="" && ERROR["$VER"]=""
+			IP="" && IP_DNS=""
 		fi
 		if get_public_ip; then
 			[[ $SILENT == "false"  ]] && echo "My public IPv$VER address is $IP."
@@ -98,23 +98,23 @@ run() {
 						if update_ip; then
 							[[ $SILENT == "false"  ]] && echo "Updated $FQDN to IPv$VER address $IP." && UPDATED="true"
 						else
-							ERROR[$VER]="Could not update IPv$VER address for $FQDN to $IP."
+							ERROR+="Could not update IPv$VER address for $FQDN to $IP."$'\n'
 						fi
 					else
 						if create_record; then
 							[[ $SILENT == "false" ]] && echo "Created DNS entry for $FQDN with IPv$VER address $IP."
 						else
-							ERROR["$VER"]="Could not create DNS entry for $FQDN with IPv$VER $IP."
+							ERROR+="Could not create DNS entry for $FQDN with IPv$VER $IP."$'\n'
 						fi
 					fi
 				else
 					[[ $SILENT == "false" ]] && echo "No IPv$VER update needed for host $FQDN."
 				fi
 			else
-				ERROR["$VER"]="Could not resolve IPv$VER address of $FQDN."
+				ERROR+="Could not resolve IPv$VER address of $FQDN."$'\n'
 			fi
 		else
-			ERROR["$VER"]="Could not get public IPv$VER address from $IP_SERVICE."
+			ERROR+="Could not get public IPv$VER address from $IP_SERVICE."$'\n'
 		fi
 	done
 	notify
@@ -168,10 +168,9 @@ update_ip() {
 }
 
 notify() {
-	[[ -n "${ERROR[4]}" ]] && MSG="${ERROR[4]}"$'\n' && echo "${ERROR[4]}"
-	[[ -n "${ERROR[6]}" ]] && MSG+="${ERROR[6]}" && echo "${ERROR[6]}"
-	if [[ -n "$MAIL" && -n "$MSG" && -x "$SENDMAIL" ]]; then
-		echo -e "To: $MAIL\nSubject: [$SCRIPTNAME] IP address error for $FQDN on $HOSTNAME\n\n$MSG" | "$SENDMAIL" -t
+	[[ -n "$ERROR" ]] && echo "$ERROR"
+	if [[ -n "$MAIL" && -x "$SENDMAIL" && -n "$ERROR" ]]; then
+		echo -e "To: $MAIL\nSubject: [$SCRIPTNAME] IP address error for $FQDN on $HOSTNAME\n\n$ERROR" | "$SENDMAIL" -t
 	elif [[ "$UPDATED" == "true" && -n "$UPDATE_MSG" ]]; then
 		echo -e "To: $MAIL\nSubject: [$SCRIPTNAME] IP address updated for $FQDN on $HOSTNAME\n\n$UPDATE_MSG" | "$SENDMAIL" -t
 	fi
