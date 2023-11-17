@@ -5,18 +5,15 @@
 # Ideally, this script runs as a cronjob or systemd.timer unit. If the zone 
 # record doesn't exist yet, it gets created.
 #
-# Create a configuration file under /etc/default/gandi-update with the 
-# mandatory variables APIKEY, RECORD and DOMAIN. Adapt the other 
-# variables to your needs.
-#
-# Set DNS_SERVER to query the current IP address of a host on a specific DNS 
-# server.
+# Create a configuration file under /etc/default/gandi-updat containing the
+# mandatory variables APIKEY, RECORD and DOMAIN. Adapt the other variables 
+# to your needs.
+# Set DNS_SERVER to query the current IP address of a host from a specific 
+# DNS server.
 # Set UPDATE_MSG to get a notification upon a successful update.
-#
 # The packages "curl" and "coreutils" are required. A "host" command (for 
 # example from "bind9-utils package) is required aswell.
 #
-# Configuration file /etc/default/gandi-update
 # Mandatory variables:
 #RECORD="www"
 #DOMAIN="domain.tld"
@@ -30,12 +27,10 @@
 #API="https://api.gandi.net/v5/livedns/"
 #IP_SERVICE="https://ifconfig.co/"
 
-set -uo pipefail
-
-# Get variables
-. "/etc/default/gandi-update"
+set -euo pipefail
 
 # Get and set variables
+. "/etc/default/gandi-update"
 RECORD=${RECORD:-}
 DOMAIN=${DOMAIN:-}
 APIKEY=${APIKEY:-}
@@ -48,8 +43,14 @@ API=${API:-https://api.gandi.net/v5/livedns/}
 IP_SERVICE=${IP_SERVICE:-https://ifconfig.co}
 SENDMAIL=${SENDMAIL:-/usr/sbin/sendmail}
 SILENT="${SILENT:-false}"
+FORCE_UPDATE_DAYS="${FORCE_UPDATE_DAYS:-1}"
 
-# Lockfile
+# Script variables
+SCRIPTNAME=$(basename "$0")
+HOSTNAME=$(hostname --long)
+LC_ALL=C # Speed up grep
+
+# Lockfile, not running as systemd service
 if [[ "active" != $(systemctl is-active gandi-update.timer) ]]; then
 	LOCKFILE="/tmp/$SCRIPTNAME-lockfile"
     exec {FD}<>"$LOCKFILE" || exit 1
@@ -59,36 +60,15 @@ if [[ "active" != $(systemctl is-active gandi-update.timer) ]]; then
 fi
 
 # Check mandatory variables
-if [[ -z "$RECORD" ]]; then
-    echo "No domain set."
-    exit 1
-elif [[ -z "$DOMAIN" ]]; then
-    echo "No record set."
-    exit 1
-elif [[ -z "$APIKEY" ]]; then
-    echo "No apikey set."
-    exit 1
-fi
-
-# Script variables
-SCRIPTNAME=$(basename "$0")
-HOSTNAME=$(hostname --long)
-LC_ALL=C # Speed up grep
+[[ -z "$RECORD" ]] && echo "No domain set." && exit 1
+[[ -z "$DOMAIN" ]] && echo "No record set." && exit 1
+[[ -z "$APIKEY" ]] && echo "No apikey set." && exit 1
 
 # Curl args
 CURL_ARGS="-m $TIMEOUT"
-if [[ "$SILENT" == "true" ]]; then
-	CURL_ARGS="$CURL_ARGS --silent --output /dev/null"
-fi
+[[ "$SILENT" == "true" ]] && CURL_ARGS="$CURL_ARGS --silent --output /dev/null"
 
 # Function variables
-STATUS=""
-DNS_STATUS=""
-ERR=""
-UPDATED="false"
-ERR_4=""
-ERR_6=""
-# Build FQDN
 if [[ "$RECORD" == "@" ]]; then
 	FQDN="$DOMAIN"
 else
@@ -96,127 +76,105 @@ else
 fi
 CACHE_FILE="/tmp/$SCRIPTNAME-$(echo "$FQDN" | tr -cd '[:alnum:]')"
 
-
-# Get IP address
-get_ip_address() {
-	VER=""
-	if [[ "$1" == "4" ]]; then
-		VER="4"
-		REGEXP='[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}'
-	elif [[ "$1" == "6" ]]; then
-		VER="6"
-		REGEXP='([a-f0-9:]+:+)+[a-f0-9]+'
-	else
-		echo "No IP version specified."
-		exit 1
-	fi
-
-	IP=$(curl -s -"$VER" "$IP_SERVICE" | grep -oE "$REGEXP" | head -1)
-	if [[ -z "$IP" ]]; then
-		STATUS="Could not get IPv$VER address from $IP_SERVICE."
-		ERR="$STATUS"
-	else
-		STATUS="My public IPv$VER address is $IP."
-	fi
-	[[ $SILENT == "false" ]] && echo "$STATUS"
-
-	IP_DNS=$(host -W "$TIMEOUT" "$FQDN" $DNS_SERVER | grep -oE "address $REGEXP" | grep -oE "$REGEXP" | head -1)
-	if [[ -z "$IP_DNS" ]]; then
-		DNS_STATUS="Could not resolve IPv$VER address of $FQDN."
-		ERR="$ERR"$'\n'"$DNS_STATUS"
-	else
-		DNS_STATUS="The host $FQDN is resolving to $IP_DNS."
-	fi
-	[[ $SILENT == "false" ]] && echo "$DNS_STATUS"
-
-	[[ -n "$ERR" ]] && declare -g ERR_$VER="$ERR"
-}
-
-
-update_ip_address() {
-	VER=""
-	if [[ "$1" == "4" ]]; then
-		VER="4"
-		TYPE="A"
-	elif [[ "$1" == "6" ]]; then
-		VER="6"
-		TYPE="AAAA"
-	else
-		echo "No IP version specified."
-		exit 1
-	fi
-	# Cache and update address record
-	if [[ -n "$IP" ]]; then
-		[[ ! -f "$CACHE_FILE"-"$VER" ]] && echo "$IP" > "$CACHE_FILE"-"$VER"
-		if [[ "$(cat "$CACHE_FILE"-"$VER")" != "$IP" || "$IP_DNS" != "$IP" ]]; then
-			echo "$IP" > "$CACHE_FILE"-"$VER"
-			# Get domain record on Gandi.net
-			RECORD_CHECK=$(curl -s "$API" -H 'Content-Type: application/json' "$API/domains/$DOMAIN/records/$RECORD/$TYPE")
-			if echo "$RECORD_CHECK" | grep -q "\"rrset_name\":\"$RECORD\""; then
-				# Record available, so update record
-				SET_RECORD_DATA='{
-					"rrset_ttl":"'$TTL'",
-					"rrset_values": ["'$IP'"]
-				}'	
-				if curl "$CURL_ARGS" -X PUT -H 'Content-Type: application/json' -H "Authorization: Apikey $APIKEY" -d "$SET_RECORD_DATA" "$API/domains/$DOMAIN/records/$RECORD/$TYPE"; then
-				if curl "$CURL_ARGS" -X POST -H 'Content-Type: application/json' -d "$SET_RECORD_DATA" "$API"; then
-					[[ $SILENT == "false" ]] && echo "Updated $FQDN to IPv$VER address $IP."
+run() {
+	UPDATED="false"
+	MSG=""
+	for VER in "4" "6"; do
+		if [[ "$VER" == "4" ]]; then
+			REGEXP='[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}'
+			TYPE="A"
+			IP="" && IP_DNS="" && ERROR["$VER"]=""
+		elif [[ "$VER" == "6" ]]; then
+			REGEXP='([a-f0-9:]+:+)+[a-f0-9]+'
+			TYPE="AAAA"
+			IP="" && IP_DNS="" && ERROR["$VER"]=""
+		fi
+		if get_public_ip; then
+			[[ $SILENT == "false"  ]] && echo "My public IPv$VER address is $IP."
+			if resolve_ip; then
+				[[ $SILENT == "false"  ]] && echo "The host $FQDN is resolving to $IP_DNS."
+				if cache_ip; then
+					if get_record; then
+						if update_ip; then
+							[[ $SILENT == "false"  ]] && echo "Updated $FQDN to IPv$VER address $IP." && UPDATED="true"
+						else
+							ERROR[$VER]="Could not update IPv$VER address for $FQDN to $IP."
+						fi
+					else
+						if create_record; then
+							[[ $SILENT == "false" ]] && echo "Created DNS entry for $FQDN with IPv$VER address $IP."
+						else
+							ERROR["$VER"]="Could not create DNS entry for $FQDN with IPv$VER $IP."
+						fi
+					fi
 				else
-					ERR="Could not update IPv$VER address $FQDN to $IP."
-					declare -g ERR_$VER="$ERR"
-					[[ $SILENT == "false" ]] && echo "$ERR"
+					[[ $SILENT == "false" ]] && echo "No IPv$VER update needed for host $FQDN."
 				fi
 			else
-				# Record not yet available, create record
-				SET_RECORD_DATA='{
-					"rrset_ttl":"'$TTL'",
-					"rrset_values": ["'$IP'"]
-				}'
-				if curl "$CURL_ARGS" -X POST -H 'Content-Type: application/json' -H "Authorization: Apikey $APIKEY" -d "$SET_RECORD_DATA" "$API/domains/$DOMAIN/records/$RECORD/$TYPE"; then
-					[[ $SILENT == "false" ]] && echo "Created DNS entry for $FQDN with IPv$VERS $IP."
-				else
-					ERR="Could not create DNS entry for $FQDN with IPv$VER $IP."
-					declare -g ERR_$VER="$ERR"
-					[[ $SILENT == "false" ]] && echo "$ERR"
-				fi
+				ERROR["$VER"]="Could not resolve IPv$VER address of $FQDN."
 			fi
-			UPDATED="true"
 		else
-			[[ $SILENT == "false" ]] && echo "No IPv$VER update needed for host $FQDN."
+			ERROR["$VER"]="Could not get public IPv$VER address from $IP_SERVICE."
 		fi
-	fi
-
-	# Delete cached address daily
-	find "$CACHE_FILE-$VER" -type f -mtime +1 -delete
-fi
+	done
+	notify
 }
 
+get_public_ip() {
+	IP=$(curl -s -"$VER" "$IP_SERVICE" | grep -oE "$REGEXP" | head -1) || return 1
+}
 
-notify_on_errors() {
-	if [[ -n "$MAIL" && -x "$SENDMAIL" ]]; then
-		if [[ -n "$ERR_4" || -n "$ERR_6" ]]; then
+resolve_ip() {
+	IP_DNS=$(host -W "$TIMEOUT" "$FQDN" $DNS_SERVER | grep -oE "address $REGEXP" | grep -oE "$REGEXP") || return 1
+}
 
-${SENDMAIL} "${MAIL}" <<EOF
-subject: [$SCRIPTNAME] IP address error for $FQDN on $HOSTNAME
-
-$ERR_4
-$ERR_6
-EOF
-		elif [[ -n $UPDATE_MSG ]]; then
-		    if [[ "$UPDATED" == "true" ]]; then
-
-"$SENDMAIL" "$MAIL" <<EOF
-subject: [$SCRIPTNAME] IP address updated for $FQDN on $HOSTNAME
-
-$UPDATE_MSG
-EOF
-
-		    fi
-		fi
+cache_ip() {
+	[[ -f "$CACHE_FILE"-"$VER" ]] && find "$CACHE_FILE-$VER" -type f -mtime +"$FORCE_UPDATE_DAYS" -delete
+	[[ ! -f "$CACHE_FILE"-"$VER" ]] && echo "$IP" > "$CACHE_FILE"-"$VER"
+	if [[ "$(cat "$CACHE_FILE"-"$VER")" != "$IP" || "$IP_DNS" != "$IP" ]]; then
+		echo "$IP" > "$CACHE_FILE"-"$VER"
+	else
+		return 1
 	fi
 }
-get_ip_address "4"
-update_ip_address "4"
-get_ip_address "6"
-update_ip_address "6"
-notify_on_errors
+
+get_record() {
+	RECORD_CHECK=$(curl -s -H 'Content-Type: application/json' \
+		-H "Authorization: Apikey $APIKEY" \
+		"$API/domains/$DOMAIN/records/$RECORD/$TYPE")
+	echo "$RECORD_CHECK" | grep -q "\"rrset_name\":\"$RECORD\"" || return 1
+}
+
+create_record() {
+	SET_RECORD_DATA='{
+		"rrset_ttl":"'$TTL'",
+		"rrset_values": ["'$IP'"]
+	}'
+	curl "$CURL_ARGS" -X POST -H 'Content-Type: application/json' \
+		-H "Authorization: Apikey $APIKEY" \
+		-d "$SET_RECORD_DATA" \
+		"$API/domains/$DOMAIN/records/$RECORD/$TYPE" || return 1
+}
+
+update_ip() {
+	SET_RECORD_DATA='{
+		"rrset_ttl":"'$TTL'",
+		"rrset_values": ["'$IP'"]
+	}'
+	curl "$CURL_ARGS" -X PUT -H 'Content-Type: application/json' \
+		-H "Authorization: Apikey $APIKEY" \
+		-d "$SET_RECORD_DATA" \
+		"$API/domains/$DOMAIN/records/$RECORD/$TYPE" || return 1
+}
+
+notify() {
+	[[ -n "${ERROR[4]}" ]] && MSG="${ERROR[4]}"$'\n' && echo "${ERROR[4]}"
+	[[ -n "${ERROR[6]}" ]] && MSG+="${ERROR[6]}" && echo "${ERROR[6]}"
+	if [[ -n "$MAIL" && -n "$MSG" && -x "$SENDMAIL" ]]; then
+		echo -e "To: $MAIL\nSubject: [$SCRIPTNAME] IP address error for $FQDN on $HOSTNAME\n\n$MSG" | "$SENDMAIL" -t
+	elif [[ "$UPDATED" == "true" && -n "$UPDATE_MSG" ]]; then
+		echo -e "To: $MAIL\nSubject: [$SCRIPTNAME] IP address updated for $FQDN on $HOSTNAME\n\n$UPDATE_MSG" | "$SENDMAIL" -t
+	fi
+}
+
+run
