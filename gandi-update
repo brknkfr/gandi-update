@@ -52,8 +52,8 @@ HOSTNAME=$(hostname --long)
 ! command -v find >/dev/null && echo "No find available." && exit 1
 
 # Curl args
-CURL_ARGS="--max-time 5"
-[ "$SILENT" = "true" ] && CURL_ARGS="$CURL_ARGS --silent --output /dev/null"
+CURL_ARGS="-m 5"
+[ "$SILENT" = "true" ] && CURL_ARGS="$CURL_ARGS -s -o /dev/null"
 
 # Function variables
 if [ "$RECORD" = "@" ]; then
