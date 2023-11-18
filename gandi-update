@@ -70,10 +70,7 @@ run() {
 	ERROR=""
 	IP_VERSIONS="4 6"
 	[ "$DISABLE_IPV6" != "false" ] && IP_VERSIONS="4"
-
-	if [ "active" != "$(systemctl is-active gandi-update.timer)" ]; then
-		SILENT="${SILENT:-true}"
-	fi
+	[ "active" = "$(systemctl is-active gandi-update.timer)" ] || SILENT="${SILENT:-false}"
 	
 	for VER in $IP_VERSIONS; do
 		if [ "$VER" = "4" ]; then
