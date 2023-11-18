@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 #
-# A small, even minimalistic, simple and posix compliant script to update a
-# zone record using the API of Gandi.net (http://doc.livedns.gandi.net/).
+# A small, even minimalistic, yet simple and posix compliant script to update 
+# a zone record using the API of Gandi.net (http://doc.livedns.gandi.net/).
 #
 # Requirements: A posix shell, the command "curl" and "find" (from 
 # package "findutils"). For notifications, you need a working "sendmail" 
@@ -17,10 +17,9 @@
 #RECORD="www"
 #DOMAIN="domain.tld"
 #APIKEY="string"
-# Optional variables (working mail system needed for mail notification):
+# Optional variables:
 #MAIL="notification-email@address"
 #UPDATE_MSG="IP updated for $FQDN." # Message to send upon IP update.
-#TIMEOUT="5"
 #TTL="300"
 #API="https://api.gandi.net/v5/livedns/"
 #IP_SERVICE="https://ifconfig.co"
@@ -78,11 +77,11 @@ run() {
 	
 	for VER in $IP_VERSIONS; do
 		if [ "$VER" = "4" ]; then
-			AWK_IP_PATTERN='{match($0,/[0-9]{1,3}+\.[0-9]{1,3}+\.[0-9]{1,3}+\.[0-9]{1,3}+/); ip = substr($0,RSTART,RLENGTH); print ip}'
+			AWK_IP_PATTERN='{match($0,/[0-9]{1,3}+\.[0-9]{1,3}+\.[0-9]{1,3}+\.[0-9]{1,3}+/);print $0}'
 			TYPE="A"
 			IP="" && IP_DNS=""
 		elif [ "$VER" = "6" ]; then
-			AWK_IP_PATTERN='{match($0,/([a-f0-9:]+:+)+[a-f0-9]+/); ip = substr($0,RSTART,RLENGTH); print ip}'
+			AWK_IP_PATTERN='{match($0,/([a-f0-9:]+:+)+[a-f0-9]+/);print $0}'
 			TYPE="AAAA"
 			IP="" && IP_DNS=""
 		fi
@@ -139,7 +138,7 @@ get_record() {
 	RECORD_CHECK=$(curl -s -H 'Content-Type: application/json' \
 		-H "Authorization: Apikey $APIKEY" \
 		"$API/domains/$DOMAIN/records/$RECORD/$TYPE" | 
-		awk 'match($0, /"rrset_name":"[a-z]+/){print substr($0, RSTART+14,  RLENGTH-14)}')
+		awk 'match($0, /"rrset_name":"[a-z]+/){print substr($0, RSTART+14, RLENGTH-14)}')
 	[ "$RECORD_CHECK" = "$RECORD" ] || return 1
 }
 
