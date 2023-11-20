@@ -61,7 +61,7 @@ if [ "$RECORD" = "@" ]; then
 else
 	FQDN="${RECORD}"."${DOMAIN}"
 fi
-CACHE_FILE="/tmp/$SCRIPTNAME-$(echo "$FQDN" | tr -cd '[:alnum:]')"
+CACHE_FILE="/tmp/$SCRIPTNAME-$(echo "$FQDN" | awk '{gsub(/\./,"_");print}' )"
 NL="
 "
 
@@ -74,11 +74,11 @@ run() {
 	
 	for VER in $IP_VERSIONS; do
 		if [ "$VER" = "4" ]; then
-			AWK_IP_PATTERN='{match($0,/[0-9]{1,3}+\.[0-9]{1,3}+\.[0-9]{1,3}+\.[0-9]{1,3}+/);print $0}'
+			AWK_IP_PATTERN='/^[0-9][0-9]?[0-9]?\.[0-9][0-9]?[0-9]?\.[0-9][0-9]?[0-9]?\.[0-9][0-9]?[0-9]?$/{print}'
 			TYPE="A"
 			IP="" && IP_DNS=""
 		elif [ "$VER" = "6" ]; then
-			AWK_IP_PATTERN='{match($0,/([a-f0-9:]+:+)+[a-f0-9]+/);print $0}'
+			AWK_IP_PATTERN='/^[0-9a-f][0-9a-f]?[0-9a-f]?[0-9a-f]?::?([0-9a-f][0-9a-f]?[0-9a-f]?[0-9a-f]?)?(:[0-9a-f][0-9a-f]?[0-9a-f]?[0-9a-f]?)?(:[0-9a-f][0-9a-f]?[0-9a-f]?[0-9a-f]?)?(:[0-9a-f][0-9a-f]?[0-9a-f]?[0-9a-f]?)?(:[0-9a-f][0-9a-f]?[0-9a-f]?[0-9a-f]?)?(:[0-9a-f][0-9a-f]?[0-9a-f]?[0-9a-f]?)?(:[0-9a-f][0-9a-f]?[0-9a-f]?[0-9a-f]?)?$/{print}'
 			TYPE="AAAA"
 			IP="" && IP_DNS=""
 		fi
@@ -118,7 +118,7 @@ get_public_ip() {
 }
 
 resolve_ip() {
-	IP_DNS=$(getent ahostsv"$VER" "$FQDN" | awk '{ print $1; exit }') || return 1
+	IP_DNS=$(getent ahostsv"$VER" "$FQDN" | awk '{print $1;exit}') || return 1
 }
 
 cache_ip() {
